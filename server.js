@@ -1,6 +1,6 @@
 const express = require("express");
-const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
+const Database = require("better-sqlite3");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,23 +8,24 @@ const PORT = process.env.PORT || 3000;
 // =========================
 // BANCO DE DADOS
 // =========================
-const db = new sqlite3.Database("database.db");
+const db = new Database("database.db");
 
+// middlewares
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // =========================
-// TABELAS
+// CRIA TABELAS SE NÃO EXISTIREM
 // =========================
-db.run(`
+db.prepare(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE,
   password TEXT
 )
-`);
+`).run();
 
-db.run(`
+db.prepare(`
 CREATE TABLE IF NOT EXISTS requisicoes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   usuario TEXT,
@@ -32,32 +33,29 @@ CREATE TABLE IF NOT EXISTS requisicoes (
   status TEXT,
   data TEXT
 )
-`);
+`).run();
 
 // =========================
 // USUÁRIO PADRÃO
 // login: admin
 // senha: 123
 // =========================
-db.run(`
+db.prepare(`
 INSERT OR IGNORE INTO users (id, username, password)
 VALUES (1, 'admin', '123')
-`);
+`).run();
 
 // =========================
 // LOGIN
 // =========================
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
+  const user = db.prepare(
+    "SELECT * FROM users WHERE username = ? AND password = ?"
+  ).get(username, password);
 
-  db.get(
-    "SELECT * FROM users WHERE username = ? AND password = ?",
-    [username, password],
-    (err, row) => {
-      if (row) res.json({ success: true });
-      else res.json({ success: false });
-    }
-  );
+  if (user) res.json({ success: true });
+  else res.json({ success: false });
 });
 
 // =========================
@@ -69,76 +67,62 @@ app.post("/requisicoes", (req, res) => {
   const { usuario, descricao } = req.body;
   const data = new Date().toLocaleString();
 
-  db.run(
-    `INSERT INTO requisicoes (usuario, descricao, status, data)
-     VALUES (?, ?, ?, ?)`,
-    [usuario, descricao, "Pendente", data],
-    function () {
-      res.json({ id: this.lastID });
-    }
-  );
+  const stmt = db.prepare(`
+    INSERT INTO requisicoes (usuario, descricao, status, data)
+    VALUES (?, ?, ?, ?)
+  `);
+  const result = stmt.run(usuario, descricao, "Pendente", data);
+
+  res.json({ id: result.lastInsertRowid });
 });
 
 // READ – listar todas
 app.get("/requisicoes", (req, res) => {
-  db.all(
-    "SELECT * FROM requisicoes ORDER BY id DESC",
-    (err, rows) => {
-      res.json(rows);
-    }
-  );
+  const rows = db.prepare(
+    "SELECT * FROM requisicoes ORDER BY id DESC"
+  ).all();
+  res.json(rows);
 });
 
 // READ – buscar por ID
 app.get("/requisicoes/:id", (req, res) => {
-  db.get(
-    "SELECT * FROM requisicoes WHERE id = ?",
-    [req.params.id],
-    (err, row) => {
-      res.json(row);
-    }
-  );
+  const row = db.prepare(
+    "SELECT * FROM requisicoes WHERE id = ?"
+  ).get(req.params.id);
+  res.json(row);
 });
 
 // UPDATE – editar descrição
 app.put("/requisicoes/:id", (req, res) => {
   const { descricao } = req.body;
+  db.prepare(
+    "UPDATE requisicoes SET descricao = ? WHERE id = ?"
+  ).run(descricao, req.params.id);
 
-  db.run(
-    "UPDATE requisicoes SET descricao = ? WHERE id = ?",
-    [descricao, req.params.id],
-    () => {
-      res.json({ updated: true });
-    }
-  );
+  res.json({ updated: true });
 });
 
 // UPDATE – alterar status
 app.put("/requisicoes/:id/status", (req, res) => {
   const { status } = req.body;
+  db.prepare(
+    "UPDATE requisicoes SET status = ? WHERE id = ?"
+  ).run(status, req.params.id);
 
-  db.run(
-    "UPDATE requisicoes SET status = ? WHERE id = ?",
-    [status, req.params.id],
-    () => {
-      res.json({ statusUpdated: true });
-    }
-  );
+  res.json({ statusUpdated: true });
 });
 
 // DELETE – excluir requisição
 app.delete("/requisicoes/:id", (req, res) => {
-  db.run(
-    "DELETE FROM requisicoes WHERE id = ?",
-    [req.params.id],
-    () => {
-      res.json({ deleted: true });
-    }
-  );
+  db.prepare(
+    "DELETE FROM requisicoes WHERE id = ?"
+  ).run(req.params.id);
+
+  res.json({ deleted: true });
 });
 
 // =========================
-// START
+// START SERVIDOR
 // =========================
 app.listen(PORT, () => {
   console.log("Servidor rodando na porta " + PORT);
